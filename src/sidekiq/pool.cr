@@ -1,5 +1,4 @@
 require "uri"
-require "pool/connection"
 require "redis"
 
 module Sidekiq
@@ -15,32 +14,32 @@ module Sidekiq
   #
   # Note that you set REDIS_PROVIDER to the **name** of the variable which contains the URL.
   class RedisConfig
-    property! hostname : String
-    property! port : Int32
-    property! db : Int32
-    property! pool_size : Int32
-    property! pool_timeout : Float64
+    property hostname : String
+    property port : Int32
+    property db : Int32
+    property pool_size : Int32
+    property pool_timeout : Float64
     property password : String?
 
-    def initialize(@hostname = "localhost", @port = 6379, @db = 0, @pool_size = 5, @pool_timeout = 5.0, @password = nil)
-      if ENV["REDIS_PROVIDER"]?
-        url = ENV[ENV["REDIS_PROVIDER"]]
-        redis_url = URI.parse(url)
-        @hostname = redis_url.host.not_nil!
-        @port = redis_url.port
-        @password = redis_url.password
-        if redis_url.path
-          x = redis_url.path.not_nil!
-          if x.size > 1
-            begin
-              @db = x[1..-1].to_i
-            rescue ex : ArgumentError
-              raise ArgumentError.new("Invalid Redis DB value '#{x[1..-1]}', should be a number from 0 to 15")
-            end
-          end
-        end
-        @password = redis_url.password
-      end
+    DEFAULT_HOST = "localhost"
+    DEFAULT_PORT = 6379
+
+    def initialize(@hostname = DEFAULT_HOST, @port = DEFAULT_PORT, @db = 0, @pool_size = 26, @pool_timeout = 5.0, @password = nil)
+      env_var = ENV["REDIS_PROVIDER"]?
+      initialize_from_env_var(env_var) if env_var
+    end
+
+    private def initialize_from_env_var(env_var : String)
+      url = ENV[env_var]? || raise ArgumentError.new("#{env_var} environment variable must contain a Redis URL")
+
+      redis_url = URI.parse(url)
+      @hostname = redis_url.host || DEFAULT_HOST
+      @port = redis_url.port || DEFAULT_PORT
+      @password = redis_url.password
+      redis_url_path = redis_url.path
+      return if redis_url_path.nil? || redis_url_path.size <= 1
+
+      @db = redis_url_path[1..].to_i? || raise ArgumentError.new("Invalid Redis DB value '#{redis_url_path[1..]}', should be a number from 0 to 15")
     end
 
     def new_client
@@ -53,6 +52,8 @@ module Sidekiq
   end
 
   class Pool
+    @pool : ConnectionPool(Redis)
+
     # Set up a pool of connections to Redis on localhost:6379:
     #
     #     Sidekiq::Pool.new(5)
@@ -61,10 +62,13 @@ module Sidekiq
       initialize(RedisConfig.new(pool_size: size))
     end
 
-    def initialize(redis_cfg : RedisConfig)
-      @pool = ConnectionPool(Redis).new(capacity: redis_cfg.pool_size, timeout: redis_cfg.pool_timeout) do
-        redis_cfg.new_client
-      end
+    def initialize(cfg : RedisConfig)
+      @pool = Redis::PooledClient.new(host: cfg.hostname,
+        port: cfg.port,
+        password: cfg.password,
+        database: cfg.db,
+        pool_size: cfg.pool_size,
+        pool_timeout: cfg.pool_timeout).pool
     end
 
     # Execute one or more Redis operations:
@@ -84,9 +88,10 @@ module Sidekiq
     #     end
     #
     def redis
-      @pool.connection do |conn|
-        yield conn
-      end
+      conn = @pool.checkout
+      yield conn
+    ensure
+      @pool.checkin(conn) if conn
     end
   end
 end

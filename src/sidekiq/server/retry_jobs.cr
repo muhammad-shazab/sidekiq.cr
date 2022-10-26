@@ -59,7 +59,7 @@ module Sidekiq
         @max_retries = DEFAULT_MAX_RETRY_ATTEMPTS
       end
 
-      def call(job, ctx)
+      def call(job, ctx) : Bool
         yield
         true
       rescue e : Exception
@@ -95,15 +95,9 @@ module Sidekiq
 
         job.error_message = exception.message
         job.error_class = exception.class.name
-        count = if job.retry_count.nil?
-                  job.failed_at = Time.now
-                  job.retry_count = 0
-                else
-                  job.retried_at = Time.now
-                  c = job.retry_count.not_nil!
-                  c += 1
-                  job.retry_count = c
-                end
+        job.failed_at = Time.local if job.retry_count.zero?
+        job.retried_at = Time.local
+        count = job.retry_count += 1
 
         tcount = traces(job.backtrace)
         job.error_backtrace = exception.backtrace[0...tcount] if tcount > 0
@@ -111,7 +105,7 @@ module Sidekiq
         if count < max_retry_attempts
           delay = delay_for(job, count, exception)
           ctx.logger.debug { "Failure! Retry #{count} in #{delay} seconds" }
-          retry_at = Time.now + delay.seconds
+          retry_at = Time.local + delay.seconds
           payload = job.to_json
           ctx.pool.redis do |conn|
             conn.zadd("retry", retry_at.to_unix_f.to_s, payload)
@@ -127,13 +121,13 @@ module Sidekiq
       def retries_exhausted(job, ctx, exception)
         ctx.logger.debug { "Retries exhausted for job" }
 
-        send_to_morgue(job, ctx) unless job.dead == false
+        send_to_morgue(job, ctx) if job.dead?
       end
 
       def send_to_morgue(job, ctx)
         ctx.logger.info { "Adding dead #{job.klass} job #{job.jid}" }
         payload = job.to_json
-        now = Time.now
+        now = Time.local
         ctx.pool.redis do |conn|
           conn.multi do
             conn.zadd("dead", now.to_unix_f.to_s, payload)

@@ -6,7 +6,6 @@ require "./heartbeat"
 
 module Sidekiq
   class Server < Sidekiq::Context
-    getter environment : String
     getter concurrency : Int32
     getter fetcher : Sidekiq::Fetch
     getter scheduler : Sidekiq::Scheduled::Poller
@@ -14,14 +13,14 @@ module Sidekiq
     getter server_middleware : Sidekiq::Middleware::Chain(Sidekiq::Middleware::ServerEntry)
     getter error_handlers : Array(Sidekiq::ExceptionHandler::Base)
     getter processors : Array(Sidekiq::Processor)
-    getter logger : ::Logger
+    getter logger : ::Log
     getter labels : Array(String)
     getter queues : Array(String)
     getter tag : String
     getter identity : String
     getter hostname : String
 
-    def initialize(@environment = "development", @queues = ["default"],
+    def initialize(@queues = ["default"],
                    @concurrency = 25, @logger = Sidekiq::Logger.build)
       @hostname = ENV["DYNO"]? || System.hostname
       nonce = Random::Secure.hex(6)

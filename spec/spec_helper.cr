@@ -1,23 +1,37 @@
 require "spec"
+require "timecop"
 require "../src/sidekiq"
 
-POOL = Sidekiq::Pool.new(1)
+Timecop.safe_mode = true
+
+# FIXME: spec/web_spec.cr and spec/scheduled_spec.cr are requiring 2 redis connections.
+POOL = Sidekiq::Pool.new(2)
 
 class MockContext < Sidekiq::Context
-  getter pool
-  getter logger
-  getter output
-  getter error_handlers
+  getter pool : Sidekiq::Pool
+  getter logger : ::Log
+  getter error_handlers : Array(Sidekiq::ExceptionHandler::Base)
 
   def initialize
     @pool = POOL
-    @output = IO::Memory.new
-    @logger = ::Logger.new(@output)
+    @logger = ::Log.for("Sidekiq-test", :debug)
+    @logger.backend = ::Log::MemoryBackend.new
     @error_handlers = [] of Sidekiq::ExceptionHandler::Base
+  end
+
+  def log_entries
+    @logger.backend.as(::Log::MemoryBackend).entries
   end
 end
 
 Sidekiq::Client.default_context = MockContext.new
+
+class FakeWorker
+  include Sidekiq::Worker
+
+  def perform
+  end
+end
 
 def requires_redis(op, ver, &block)
   redis_version = POOL.redis { |c| c.info["redis_version"] }.as(String)

@@ -1,15 +1,8 @@
 require "./spec_helper"
 require "../src/sidekiq/server"
 
-class FakeWorker
-  include Sidekiq::Worker
-
-  def perform
-  end
-end
-
 class Foo < Sidekiq::Middleware::ServerEntry
-  def call(job, ctx)
+  def call(job, ctx) : Bool
     yield
   end
 end

@@ -19,7 +19,7 @@ describe Sidekiq do
 
   describe "pool" do
     it "works" do
-      t = Time.now
+      t = Time.local
       pool = ConnectionPool.new { Redis.new }
       pool.connection do |conn|
         conn.set("foo", t)
@@ -57,7 +57,7 @@ describe Sidekiq do
         ENV["FOO_URL"] = "redis://localhost:6379/dev"
 
         expect_raises ArgumentError, /Invalid Redis/ do
-          r = Sidekiq::Pool.new(1)
+          Sidekiq::Pool.new(1)
         end
       ensure
         ENV["REDIS_PROVIDER"] = nil
@@ -74,7 +74,6 @@ describe Sidekiq do
         r.port.should eq(1234)
         r.password.should eq("xyzzy")
         r.db.should eq(14)
-        r.pool_size.should eq(5)
       ensure
         ENV["REDIS_PROVIDER"] = nil
       end

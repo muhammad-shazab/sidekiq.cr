@@ -1,8 +1,6 @@
 # Sidekiq.cr
 
-[![Build Status](https://travis-ci.org/mperham/sidekiq.cr.svg)](https://travis-ci.org/mperham/sidekiq.cr)
-[![Dependency Status](https://shards.rocks/badge/github/mperham/sidekiq.cr/status.svg)](https://shards.rocks/github/mperham/sidekiq.cr)
-[![devDependency Status](https://shards.rocks/badge/github/mperham/sidekiq.cr/dev_status.svg)](https://shards.rocks/github/mperham/sidekiq.cr)
+[![Build Status](https://github.com/mperham/sidekiq.cr/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/mperham/sidekiq.cr/actions/workflows/build.yml)
 
 Sidekiq is a well-regarded background job framework for Ruby.  Now we're
 bringing the awesomeness to Crystal, a Ruby-like language.  Why?  To
@@ -10,13 +8,13 @@ give you options.  Ruby is friendly and flexible but not terribly fast.
 Crystal is statically-typed, compiled and **very fast** but retains a similar syntax to
 Ruby.
 
-Rough, initial benchmarks on macOS 10.14.5:
+Rough, initial benchmarks on macOS 10.14.5, ruby 2.7.2:
 
 Runtime | RSS | Time | Throughput
 --------|-----|------|-------------
-MRI 2.6.3 | 55MB | 11.1 | 9,000 jobs/sec
-MRI/hiredis | 62MB | 8.3 | 12,000 jobs/sec
-Crystal 0.29.0 | 15MB | 1.4 | 69,200 jobs/sec
+Sidekiq 6.2.0 | 55MB | 16.4 | 6,100 jobs/sec
+Sidekiq 6.2.0/hiredis | 49MB | 13.0 | 7,900 jobs/sec
+Crystal 0.35.1 | 15MB | 3.8 | 26,000 jobs/sec
 
 If you have jobs which are CPU-intensive or require very high throughput,
 Crystal is an excellent alternative to native Ruby extensions.  It
@@ -27,11 +25,10 @@ compiles to a single executable so deployment is much easier than Ruby.
 Please see the [wiki](https://github.com/mperham/sidekiq.cr/wiki) for in-depth documentation and how to get
 started using Sidekiq.cr in your own app.
 
-## Upgrade?
+## Support
 
-If you use and like this project, please [let me
-know](mailto:mike@contribsys.com).  If demand warrants, I may port
-Sidekiq Pro and Enterprise functionality to Crystal for sale.
+Sidekiq.cr is community-supported and **not** commercially supported by @mperham and Contributed Systems.
+General maintenance and bug fixes are always welcomed.
 
 ## Help wanted
 
@@ -49,4 +46,4 @@ their respective languages.
 
 ## Author
 
-Mike Perham, http://www.mikeperham.com, [@mperham](https://twitter.com/mperham) / [@sidekiq](https://twitter.com/sidekiq)
+Mike Perham, http://www.mikeperham.com, [@getajobmike](https://twitter.com/getajobmike) / [@sidekiq](https://twitter.com/sidekiq)

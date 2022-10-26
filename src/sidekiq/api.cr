@@ -68,7 +68,7 @@ module Sidekiq
 
       pipe2_res = Sidekiq.redis do |conn|
         conn.pipelined do |ppp|
-          procs.each { |key| ppp.hget(key, "busy") }
+          procs.each { |key| ppp.hget(key.to_s, "busy") }
           qs.each { |queue| ppp.llen("queue:#{queue}") }
         end
       end.as(Array(Redis::RedisValue))
@@ -82,7 +82,7 @@ module Sidekiq
       default_queue_latency = if (entry = pipe1_res[6].as(Array(Redis::RedisValue)).first?)
                                 hash = JSON.parse(entry.as(String))
                                 was = hash["enqueued_at"].as_f
-                                Time.now.to_unix_f - was
+                                Time.local.to_unix_f - was
                               else
                                 0.0_f64
                               end
@@ -105,12 +105,10 @@ module Sidekiq
       stats = stat.nil? ? all : all & [stat]
 
       mset_args = Hash(String, Int32).new
-      stats.each do |stat|
-        mset_args["stat:#{stat}"] = 0
+      stats.each do |st|
+        mset_args["stat:#{st}"] = 0
       end
-      Sidekiq.redis do |conn|
-        conn.mset(mset_args)
-      end unless mset_args.empty?
+      Sidekiq.redis(&.mset(mset_args)) unless mset_args.empty?
     end
 
     private def stat(s)
@@ -145,7 +143,7 @@ module Sidekiq
 
       def initialize(days_previous, start_date = nil)
         @days_previous = days_previous
-        @start_date = start_date || Time.now.to_utc.at_beginning_of_day
+        @start_date = start_date || Time.utc.at_beginning_of_day
       end
 
       def processed
@@ -188,15 +186,30 @@ module Sidekiq
   # The job should be considered immutable but may be
   # removed from the queue via Job#delete.
   #
-  class JobProxy < ::Sidekiq::Job
-    getter item : Hash(String, JSON::Any)
+  class JobProxy
     getter value : String
 
+    @job : Job
+
     def initialize(str)
-      super(JSON::PullParser.new(str))
+      @job = Job.from_json(str)
       @value = str
-      @item = JSON.parse(str).as_h
     end
+
+    delegate args, to: @job
+    delegate created_at, to: @job
+    delegate error_backtrace, to: @job
+    delegate enqueued_at, to: @job
+    delegate error_class, to: @job
+    delegate error_message, to: @job
+    delegate failed_at, to: @job
+    delegate jid, to: @job
+    delegate klass, to: @job
+    delegate queue, to: @job
+    delegate retried_at, to: @job
+    delegate retry_count, to: @job
+    delegate to_json, to: @job
+    delegate extra_params, to: @job
 
     def display_class
       # TODO Unwrap known wrappers so they show up in a human-friendly manner in the Web UI
@@ -209,35 +222,16 @@ module Sidekiq
     end
 
     def latency
-      (Time.now.to_utc - (enqueued_at || created_at)).to_f
+      (Time.utc - (enqueued_at || created_at)).to_f
     end
 
     # #
     # Remove this job from the queue.
-    def delete
+    def delete : Bool
       count = Sidekiq.redis do |conn|
-        conn.lrem("queue:#{@queue}", 1, @value)
+        conn.lrem("queue:#{queue}", 1, @value)
       end.as(Int64)
       count != 0
-    end
-
-    def [](name)
-      @item[name]
-    end
-
-    def []?(name)
-      @item[name]?
-    end
-
-    private def safe_load(content, default)
-      begin
-        yield(*YAML.load(content))
-      rescue ex
-        # #1761 in dev mode, it"s possible to have jobs enqueued which haven"t been loaded into
-        # memory yet so the YAML can"t be loaded.
-        puts "Unable to load YAML: #{ex.message}"
-        default
-      end
     end
   end
 
@@ -260,7 +254,9 @@ module Sidekiq
     # Return all known queues within Redis.
     #
     def self.all
-      Sidekiq.redis { |c| c.smembers("queues") }.as(Array).map { |x| x.as(String) }.sort.map { |q| Sidekiq::Queue.new(q) }
+      Sidekiq.redis(&.smembers("queues")).compact_map do |name|
+        Sidekiq::Queue.new(name) if name.is_a?(String)
+      end.sort_by!(&.name)
     end
 
     getter name : String
@@ -271,7 +267,7 @@ module Sidekiq
     end
 
     def size
-      Sidekiq.redis { |con| con.llen(@rname) }
+      Sidekiq.redis(&.llen(@rname))
     end
 
     # Sidekiq Pro overrides this
@@ -293,7 +289,7 @@ module Sidekiq
 
       hash = JSON.parse(msg).as_h
       was = hash["enqueued_at"].as_f
-      Time.now.to_unix_f - was
+      Time.local.to_unix_f - was
     end
 
     def each
@@ -362,7 +358,7 @@ module Sidekiq
     def reschedule(at)
       delete
       p = @parent.not_nil!
-      p.schedule(at, item)
+      p.schedule(at, to_json)
     end
 
     def add_to_queue
@@ -373,7 +369,7 @@ module Sidekiq
     end
 
     def retry!
-      raise "Retry not available on jobs which have not failed" unless item["failed_at"]
+      raise "Retry not available on jobs which have not failed" unless failed_at
       remove_job do |message|
         job = Sidekiq::Job.from_json(message)
         job.retry_count = job.retry_count.not_nil! - 1
@@ -384,9 +380,9 @@ module Sidekiq
     # #
     # Place job in the dead set
     def kill!
-      raise "Kill not available on jobs which have not failed" unless item["failed_at"]
+      raise "Kill not available on jobs which have not failed" unless failed_at
       remove_job do |message|
-        now = Time.now.to_unix_f
+        now = Time.local.to_unix_f
         Sidekiq.redis do |conn|
           conn.multi do |m|
             m.zadd("dead", now, message)
@@ -399,6 +395,8 @@ module Sidekiq
 
     private def remove_job
       p = @parent.not_nil!
+      arr = [] of String
+
       Sidekiq.redis do |conn|
         results = conn.multi do |m|
           m.zrangebyscore(p.name, score, score)
@@ -406,31 +404,32 @@ module Sidekiq
         end.as(Array(Redis::RedisValue)).first
 
         r = results.as(Array(Redis::RedisValue))
-        arr = [] of String
         r.each do |msg|
           arr << msg.as(String)
         end
+      end
 
-        if arr.size == 1
-          yield arr.first
-        else
-          # multiple jobs with the same score
-          # find the one with the right JID and push it
-          msg = nil
-          hash = arr.group_by do |message|
-            msg = message
-            if msg.index(jid)
-              h = JSON.parse(msg).as_h
-              h["jid"] == jid
-            else
-              false
-            end
+      if arr.size == 1
+        yield arr.first
+      else
+        # multiple jobs with the same score
+        # find the one with the right JID and push it
+        msg = nil
+        hash = arr.group_by do |message|
+          msg = message
+          if msg.index(jid)
+            h = JSON.parse(msg).as_h
+            h["jid"] == jid
+          else
+            false
           end
+        end
 
-          msg = hash.fetch(true, [] of String).first?
-          yield msg if msg
+        msg = hash.fetch(true, [] of String).first?
+        yield msg if msg
 
-          # push the rest back onto the sorted set
+        # push the rest back onto the sorted set
+        Sidekiq.redis do |conn|
           conn.multi do |m|
             hash.fetch(false, [] of String).each do |message|
               m.zadd(p.name, score.to_f.to_s, message)
@@ -445,13 +444,12 @@ module Sidekiq
     getter name : String
     @_size : Int32
 
-    def initialize(name)
-      @name = name
-      @_size = Sidekiq.redis { |c| c.zcard(name) }.to_i32
+    def initialize(@name)
+      @_size = Sidekiq.redis(&.zcard(@name)).to_i32
     end
 
     def size
-      Sidekiq.redis { |c| c.zcard(name) }
+      Sidekiq.redis(&.zcard(@name))
     end
 
     def clear
@@ -464,9 +462,9 @@ module Sidekiq
   class JobSet < SortedSet
     include Enumerable(SortedEntry)
 
-    def schedule(timestamp, message)
+    def schedule(timestamp, json_message : String)
       Sidekiq.redis do |conn|
-        conn.zadd(name, timestamp.to_f.to_s, message.to_json)
+        conn.zadd(name, timestamp.to_f.to_s, json_message)
       end
     end
 
@@ -498,15 +496,9 @@ module Sidekiq
         conn.zrangebyscore(name, score, score)
       end.as(Array(Redis::RedisValue))
 
-      result = [] of SortedEntry
-      elements.reduce(result) do |result, element|
+      elements.compact_map do |element|
         entry = SortedEntry.new(self, score, element.as(String))
-        if jid
-          result << entry if entry.jid == jid
-        else
-          result << entry
-        end
-        result
+        entry if jid.nil? || entry.jid == jid
       end
     end
 
@@ -643,11 +635,11 @@ module Sidekiq
 
     def labels
       x = @attribs["labels"]?
-      x ? x.as_a.map { |x| x.as_s } : [] of String
+      x ? x.as_a.map(&.as_s) : [] of String
     end
 
     def queues
-      self["queues"].as_a.map { |x| x.as_s }
+      self["queues"].as_a.map(&.as_s)
     end
 
     def [](key)
@@ -768,7 +760,7 @@ module Sidekiq
     # contains Sidekiq processes which have sent a heartbeat within the last
     # 60 seconds.
     def size
-      Sidekiq.redis { |conn| conn.scard("processes") }
+      Sidekiq.redis(&.scard("processes"))
     end
   end
 
@@ -855,11 +847,10 @@ module Sidekiq
         unless procs.empty?
           res = conn.pipelined do |ppp|
             procs.each do |key|
-              ppp.hget(key, "busy")
+              ppp.hget(key.to_s, "busy")
             end
           end
-          arr = res.as(Array(Redis::RedisValue))
-          res.compact.each { |x| count += x.as(String).to_i }
+          count = res.sum { |x| x.nil? ? 0 : x.as(String).to_i }
         end
       end
       count

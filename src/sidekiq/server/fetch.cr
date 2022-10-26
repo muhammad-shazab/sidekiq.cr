@@ -6,7 +6,7 @@ module Sidekiq
   end
 
   abstract class Fetch
-    abstract def retrieve_work(ctx : Sidekiq::Context) : UnitOfWork
+    abstract def retrieve_work(ctx : Sidekiq::Context) : UnitOfWork?
     abstract def bulk_requeue(ctx : Sidekiq::Context, jobs : Array(UnitOfWork)) : Int32
   end
 
@@ -16,25 +16,24 @@ module Sidekiq
     TIMEOUT = 2
 
     class UnitOfWork < ::Sidekiq::UnitOfWork
+      getter job : String
+
       def initialize(@queue : String, @job : String, @ctx : Sidekiq::Context)
       end
 
-      def job
-        @job
-      end
-
-      def acknowledge
-        # nothing to do
+      def acknowledge : Bool
+        true
       end
 
       def queue_name
         @queue.sub(/.*queue:/, "")
       end
 
-      def requeue
+      def requeue : Bool
         @ctx.pool.redis do |conn|
           conn.rpush("queue:#{queue_name}", @job)
         end
+        true
       end
     end
 
@@ -50,8 +49,8 @@ module Sidekiq
       @queues = @queues.uniq
     end
 
-    def retrieve_work(ctx)
-      arr = ctx.pool.redis { |conn| conn.brpop(@queues, TIMEOUT) }.as(Array(Redis::RedisValue))
+    def retrieve_work(ctx) : Sidekiq::UnitOfWork?
+      arr = ctx.pool.redis(&.brpop(@queues, TIMEOUT)).as(Array(Redis::RedisValue))
       if arr.size == 2
         UnitOfWork.new(arr[0].to_s, arr[1].to_s, ctx)
       end
@@ -66,11 +65,11 @@ module Sidekiq
       if @strictly_ordered_queues
         @queues
       else
-        @queues.shuffle.uniq
+        @queues.shuffle.uniq!
       end
     end
 
-    def bulk_requeue(ctx, inprogress : Array(Sidekiq::UnitOfWork))
+    def bulk_requeue(ctx, inprogress : Array(Sidekiq::UnitOfWork)) : Int32
       return 0 if inprogress.empty?
 
       jobs_to_requeue = {} of String => Array(String)

@@ -1,30 +1,26 @@
 require "json"
-require "logger"
+require "log"
 require "../middleware"
 
 module Sidekiq
   module ExceptionHandler
     class Logger < Base
-      @output : ::Logger
+      @output : ::Log
 
       def initialize(@output)
       end
 
-      def call(ex : Exception, ctxHash : Hash(String, JSON::Any)? = nil)
-        @output.warn(ctxHash.to_json) if ctxHash && !ctxHash.empty?
-        @output.warn "#{ex.class.name}: #{ex.message}"
-        @output.warn ex.backtrace.join("\n")
+      def call(ex : Exception, ctx : Hash(String, JSON::Any)? = nil)
+        @output.warn(exception: ex) { ctx.try(&.to_json) }
       end
     end
 
-    def handle_exception(ctx : Sidekiq::Context, ex : Exception, ctxHash : Hash(String, JSON::Any)? = nil)
+    def handle_exception(ctx : Sidekiq::Context, ex : Exception, ctx_hash : Hash(String, JSON::Any)? = nil)
       ctx.error_handlers.each do |handler|
         begin
-          handler.call(ex, ctxHash)
+          handler.call(ex, ctx_hash)
         rescue ex2
-          ctx.logger.error "!!! ERROR HANDLER THREW AN ERROR !!!"
-          ctx.logger.error ex2
-          ctx.logger.error ex2.backtrace.join("\n")
+          ctx.logger.error(exception: ex2) { "!!! ERROR HANDLER THREW AN ERROR !!!" }
         end
       end
     end

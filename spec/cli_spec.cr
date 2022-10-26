@@ -26,10 +26,11 @@ describe "Sidekiq::CLI" do
   end
 
   it "handles no arguments gracefully" do
-    logger = ::Logger.new(IO::Memory.new)
-    logger.level = Logger::DEBUG
+    logger = ::Log.for("Sidekiq-test")
+    logger.level = :debug
 
     cli = Sidekiq::CLI.new
-    svr = cli.create(logger)
+    server = cli.create(logger)
+    server.queues.should eq(%w(default))
   end
 end

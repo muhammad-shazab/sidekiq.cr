@@ -7,6 +7,8 @@ module Sidekiq
   # to/from JSON.  In a statically-typed language, this is
   # a bit of a chore.
   class Job
+    include JSON::Serializable
+    include JSON::Serializable::Unmapped
     #
     # This global registration is a bloody hack.
     # Unclear of a better way of doing it.
@@ -21,35 +23,49 @@ module Sidekiq
       @@jobtypes[name] = klass
     end
 
-    JSON.mapping({
-      queue:      String,
-      jid:        String,
-      klass:      {type: String, key: "class"},
-      args:       {type: String, converter: String::RawConverter},
-      created_at: {type: Time, converter: Sidekiq::EpochConverter},
+    property queue : String
+    property jid : String
+    @[JSON::Field(key: "class")]
+    property klass : String
+    @[JSON::Field(converter: String::RawConverter)]
+    property args : String
+    @[JSON::Field(converter: Sidekiq::EpochConverter)]
+    getter created_at : Time
+    @[JSON::Field(converter: Sidekiq::EpochConverter)]
+    property at : Time?
+    @[JSON::Field(converter: Sidekiq::EpochConverter)]
+    property failed_at : Time?
+    @[JSON::Field(converter: Sidekiq::EpochConverter)]
+    property enqueued_at : Time?
+    @[JSON::Field(converter: Sidekiq::EpochConverter)]
+    property retried_at : Time?
+    property error_class : String?
+    property error_message : String?
+    property retry_count = 0
+    property bid : String?
+    property? dead = false
+    property error_backtrace : Array(String)?
+    property backtrace : (Bool | Int32 | Nil)
+    property retry : (Bool | Int32) = false
 
-      at:              {type: Time, converter: Sidekiq::EpochConverter, nilable: true},
-      failed_at:       {type: Time, converter: Sidekiq::EpochConverter, nilable: true},
-      enqueued_at:     {type: Time, converter: Sidekiq::EpochConverter, nilable: true},
-      retried_at:      {type: Time, converter: Sidekiq::EpochConverter, nilable: true},
-      error_class:     {type: String, nilable: true},
-      error_message:   {type: String, nilable: true},
-      retry_count:     {type: Int32, nilable: true},
-      bid:             {type: String, nilable: true},
-      dead:            {type: Bool, nilable: true},
-      error_backtrace: {type: Array(String), nilable: true},
-      backtrace:       {type: (Bool | Int32 | Nil), nilable: true},
-      retry:           {type: (Bool | Int32 | Nil), nilable: true},
-    })
+    @[JSON::Field(ignore: true)]
+    @client : Sidekiq::Client?
 
     def initialize
       @queue = "default"
       @args = "[]"
       @klass = ""
-      @created_at = Time.now.to_utc
-      @enqueued_at = nil
+      @created_at = Time.utc
       @jid = Random::Secure.hex(12)
       @retry = true
+    end
+
+    def extra_params : Hash(String, JSON::Any)
+      json_unmapped
+    end
+
+    def extra_params=(value : Hash(String, JSON::Any))
+      @json_unmapped = value
     end
 
     def client
@@ -72,8 +88,7 @@ module Sidekiq
       nil
     end
 
-    def _perform(args : String)
-      @args = args
+    def _perform(@args : String)
       client.push(self)
     end
 
@@ -82,16 +97,15 @@ module Sidekiq
     end
 
     # Run this job at or after the given instant in Time
-    def _perform_at(interval : Time, args : String)
-      perform_in(interval.to_unix_f, args)
+    def _perform_at(time : Time, @args : String)
+      @at = time if time > Time.local
+      client.push(self)
     end
 
     # Run this job +interval+ from now.
-    def _perform_in(interval : Time::Span, args : String)
-      now = Time.now
+    def _perform_in(interval : Time::Span, @args : String)
+      now = Time.local
       ts = now + interval
-
-      @args = args
       @at = ts if ts > now
 
       client.push(self)
