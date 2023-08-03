@@ -13,8 +13,8 @@ dependencies:
     github: stefanwille/crystal-redis
     version: ~> 2.6
   kemal:
-    github: kemalcr/kemal
-    version: "~> 1.0.0"
+    github: muhammad-shazab/kemal
+    branch: kilt_version_upgraded
   kemal-session:
     github: kemalcr/kemal-session
     version: "~> 1.0.0"
