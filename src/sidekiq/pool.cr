@@ -67,6 +67,7 @@ module Sidekiq
         port: cfg.port,
         password: cfg.password,
         database: cfg.db,
+        ssl: true,
         pool_size: cfg.pool_size,
         pool_timeout: cfg.pool_timeout).pool
     end
